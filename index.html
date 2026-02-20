@@ -311,47 +311,94 @@ function setCurrentDate() {
         { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+// ============================================
+// FUNÇÃO DE STATUS - COM VENCIMENTO ANUAL
+// ============================================
 function calcularStatusFerias(func) {
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
     const admissao = new Date(func.admissao + 'T00:00:00');
     
+    // Verificar se está em férias agora
     if (func.ultimasFeriasInicio && func.ultimasFeriasFim) {
         const inicio = new Date(func.ultimasFeriasInicio + 'T00:00:00');
         const fim = new Date(func.ultimasFeriasFim + 'T00:00:00');
         if (hoje >= inicio && hoje <= fim) {
-            return { status: 'em-ferias', label: 'Em Férias', diasRestantes: Math.ceil((fim - hoje) / 86400000) };
+            return { 
+                status: 'em-ferias', 
+                label: 'Em Férias', 
+                diasRestantes: Math.ceil((fim - hoje) / 86400000),
+                vencimento: null
+            };
         }
     }
 
+    // Calcular tempo de empresa
     let anos = hoje.getFullYear() - admissao.getFullYear();
     const aniversario = new Date(admissao);
     aniversario.setFullYear(hoje.getFullYear());
     if (hoje < aniversario) anos--;
     if (anos < 0) anos = 0;
 
-    const inicioPA = new Date(admissao);
-    inicioPA.setFullYear(admissao.getFullYear() + anos);
-    const fimPA = new Date(inicioPA);
-    fimPA.setFullYear(fimPA.getFullYear() + 1);
-    fimPA.setDate(fimPA.getDate() - 1);
+    // Verificar se completou 12 meses
+    const diffMeses = (hoje.getFullYear() - admissao.getFullYear()) * 12 + 
+                      (hoje.getMonth() - admissao.getMonth());
     
-    const diffMeses = (hoje.getFullYear() - admissao.getFullYear()) * 12 + (hoje.getMonth() - admissao.getMonth());
-    if (diffMeses < 12) return { status: 'em-dia', label: 'Período Incompleto', diasRestantes: null, vencimento: null };
+    if (diffMeses < 12) {
+        return { 
+            status: 'em-dia', 
+            label: 'Período Incompleto', 
+            diasRestantes: null, 
+            vencimento: null 
+        };
+    }
 
-    const vencimento = new Date(fimPA);
-    vencimento.setFullYear(vencimento.getFullYear() + 1);
+    // ============================================
+    // CÁLCULO DO VENCIMENTO - ANUAL (TODO ANO)
+    // ============================================
+    let vencimento;
+    
+    if (func.ultimasFeriasInicio) {
+        // Se já tirou férias, vence 1 ano após as últimas
+        const ultimasFerias = new Date(func.ultimasFeriasInicio + 'T00:00:00');
+        vencimento = new Date(ultimasFerias);
+        vencimento.setFullYear(ultimasFerias.getFullYear() + 1);
+    } else {
+        // Nunca tirou férias - vence 1 ano após completar 12 meses
+        vencimento = new Date(admissao);
+        vencimento.setFullYear(admissao.getFullYear() + 2);
+    }
+
     const diasParaVencimento = Math.ceil((vencimento - hoje) / 86400000);
 
+    // Determinar status
     if (diasParaVencimento < 0) {
-        return { status: 'vencidas', label: 'Vencidas', diasRestantes: diasParaVencimento, vencimento };
+        return { 
+            status: 'vencidas', 
+            label: 'Vencidas', 
+            diasRestantes: diasParaVencimento, 
+            vencimento: vencimento 
+        };
     } else if (diasParaVencimento <= 90) {
-        return { status: 'proximo-vencimento', label: 'Próx. Vencimento', diasRestantes: diasParaVencimento, vencimento };
+        return { 
+            status: 'proximo-vencimento', 
+            label: 'Próx. Vencimento', 
+            diasRestantes: diasParaVencimento, 
+            vencimento: vencimento 
+        };
     } else {
-        return { status: 'em-dia', label: 'Em Dia', diasRestantes: diasParaVencimento, vencimento };
+        return { 
+            status: 'em-dia', 
+            label: 'Em Dia', 
+            diasRestantes: diasParaVencimento, 
+            vencimento: vencimento 
+        };
     }
 }
 
+// ============================================
+// ATUALIZAÇÃO GERAL
+// ============================================
 function updateAll() {
     updateKPIs();
     updateTable();
@@ -435,6 +482,9 @@ function updateAlerts() {
     }).join('');
 }
 
+// ============================================
+// EVENT LISTENERS
+// ============================================
 function initEventListeners() {
     document.querySelectorAll('.nav-item').forEach(item => {
         item.addEventListener('click', (e) => {
@@ -453,6 +503,9 @@ function initEventListeners() {
     document.getElementById('btnSaveFunc').addEventListener('click', saveFuncionario);
 }
 
+// ============================================
+// MODAL - ADICIONAR/EDITAR
+// ============================================
 function openModal(func = null) {
     const overlay = document.getElementById('modalOverlay');
     const form = document.getElementById('funcionarioForm');
@@ -479,11 +532,20 @@ function closeModal() {
     document.getElementById('modalOverlay').classList.remove('show');
 }
 
+// ============================================
+// SALVAR FUNCIONÁRIO - FUNÇÃO PRINCIPAL
+// ============================================
 function saveFuncionario() {
     const form = document.getElementById('funcionarioForm');
-    if (!form.checkValidity()) { form.reportValidity(); return; }
+    
+    // Validação
+    if (!form.checkValidity()) { 
+        form.reportValidity(); 
+        return; 
+    }
 
     const id = document.getElementById('funcId').value;
+    
     const data = {
         nome: document.getElementById('funcNome').value.trim(),
         cargo: document.getElementById('funcCargo').value.trim(),
@@ -493,14 +555,24 @@ function saveFuncionario() {
         ultimasFeriasFim: document.getElementById('funcUltimasFeriasFim').value
     };
 
+    // Validar campos obrigatórios
+    if (!data.nome || !data.cargo || !data.departamento || !data.admissao) {
+        showToast('Preencha todos os campos obrigatórios!', 'error');
+        return;
+    }
+
     if (id) {
+        // EDITAR funcionário existente
         const index = funcionarios.findIndex(f => f.id === parseInt(id));
-        if (index !== -1) funcionarios[index] = { ...funcionarios[index], ...data };
-        showToast('Funcionário atualizado!', 'success');
+        if (index !== -1) {
+            funcionarios[index] = { ...funcionarios[index], ...data };
+            showToast('Funcionário atualizado com sucesso!', 'success');
+        }
     } else {
+        // ADICIONAR novo funcionário
         const newId = funcionarios.length > 0 ? Math.max(...funcionarios.map(f => f.id)) + 1 : 1;
         funcionarios.push({ id: newId, ...data });
-        showToast('Funcionário adicionado!', 'success');
+        showToast('Funcionário adicionado com sucesso!', 'success');
     }
 
     saveData();
@@ -508,13 +580,16 @@ function saveFuncionario() {
     updateAll();
 }
 
+// ============================================
+// EDITAR E DELETAR
+// ============================================
 function editFuncionario(id) {
     const func = funcionarios.find(f => f.id === id);
     if (func) openModal(func);
 }
 
 function deleteFuncionario(id) {
-    if (confirm('Excluir este funcionário?')) {
+    if (confirm('Tem certeza que deseja excluir este funcionário?')) {
         funcionarios = funcionarios.filter(f => f.id !== id);
         saveData();
         updateAll();
@@ -522,6 +597,9 @@ function deleteFuncionario(id) {
     }
 }
 
+// ============================================
+// UTILITÁRIOS
+// ============================================
 function formatDate(date) {
     if (!date) return '-';
     if (typeof date === 'string') date = new Date(date + 'T00:00:00');
@@ -540,3 +618,4 @@ function showToast(message, type) {
     </script>
 </body>
 </html>
+
